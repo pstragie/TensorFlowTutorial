@@ -15,7 +15,7 @@ class imagesToTfRecord:
         self.x_px = x_px
         self.y_px = y_px
 
-    def load_labels(self, label_file):
+    def load_labels(self, label_file, begin=0, einde=-1):
         """ Labels laden in dictionary
             @Return Dictionary, keys: image_id, values: label
         """
@@ -24,8 +24,9 @@ class imagesToTfRecord:
         print("header: ", header)
         labels_dict = {}
         for line in bestand:
-            name, label = line.split(",")
-            labels_dict[name] = str(label.strip("\n"))
+            for _ in range(begin, einde):
+                name, label = line.split(",")
+                labels_dict[name] = str(label.strip("\n"))
         bestand.close()
         print("lengte: ", len(labels_dict.keys()))
         return labels_dict
@@ -105,7 +106,7 @@ class imagesToTfRecord:
             @begin: slice array begin
             @einde: slice array einde
         """
-        dataset = self.buildDataset(label_file, begin=begin, einde=einde)
+        dataset = self.buildDataset(self.label_file, begin=begin, einde=einde)
         self._write_to_tf_record(dataset)
         example = self.verifyRecord(self.record_filepath)
         print(example)
@@ -131,10 +132,9 @@ if __name__ == '__main__':
     TRAIN_LABELS = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/train_labels.csv"
     OUT_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/"
 
-    # Obtain image resolution if needed: x, y, channels
-    image = [im for im in os.listdir(TRAIN_DIR)[0]]
-    y_px, x_px, preprocessing_channels = imageResolution.getResolution(image)
-    print("Image Height: %d, Width: %d, Channels: %d", y_px, x_px, preprocessing_channels)
+
+    y_px, x_px, preprocessing_channels = 96, 96, 3
+    print("Image Height: %d, Width: %d, Channels: %d" % (y_px, x_px, preprocessing_channels))
     # Call imagesToTfRecord class to build dataset and store in TFRecord
-    T = imagesToTfRecord(OUT_DIR+"histo_TF_record.h5", TRAIN_DIR, TRAIN_LABELS, x_px, y_px, preprocessing_channels)
-    T.writeRecord(begin=0, einde=1000)
+    T2 = imagesToTfRecord(OUT_DIR+"histo_1000_TF_record.h5", TRAIN_DIR, TRAIN_LABELS, x_px, y_px, preprocessing_channels)
+    T2.writeRecord(begin=0, einde=1000)
