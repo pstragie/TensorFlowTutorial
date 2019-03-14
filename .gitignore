@@ -1,0 +1,8 @@
+checkpoints/
+my_model.h5
+saved_models/
+training_1/
+training_2/
+venv
+/.idea/vcs.xml
+/.idea/workspace.xml
