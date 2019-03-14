@@ -1,5 +1,9 @@
 import tensorflow as tf
-import os
+import os, sys
+import glob
+
+tf.enable_eager_execution()
+print(tf.VERSION)
 
 class imagesToTfRecord:
 
@@ -15,6 +19,16 @@ class imagesToTfRecord:
         self.x_px = x_px
         self.y_px = y_px
 
+    def _int64_feature(self, value):
+        """ Converting the values into features
+        _int_64 is used for numeric values
+        """
+        return tf.train.Feature(int64_list=tf.train.Int64List(value=[value]))
+
+    def _bytes_feature(self, value):
+        """ _bytes is used for string/char values """
+        return tf.train.Feature(bytes_list=tf.train.BytesList(value=[value]))
+
     def load_labels(self, label_file, begin=0, einde=-1):
         """ Labels laden in dictionary
             @Return Dictionary, keys: image_id, values: label
@@ -24,9 +38,8 @@ class imagesToTfRecord:
         print("header: ", header)
         labels_dict = {}
         for line in bestand:
-            for _ in range(begin, einde):
-                name, label = line.split(",")
-                labels_dict[name] = str(label.strip("\n"))
+            name, label = line.split(",")
+            labels_dict[name] = str(label.strip("\n"))
         bestand.close()
         print("lengte: ", len(labels_dict.keys()))
         return labels_dict
@@ -38,6 +51,7 @@ class imagesToTfRecord:
         all_image_labels = [label for label in label_to_index.keys()]
 
         path_ds = tf.data.Dataset.from_tensor_slices(all_image_paths)
+        print(path_ds)
         image_ds = path_ds.map(self.load_and_preprocess_image, num_parallel_calls=self.autotune)
 
         all_labels = [label for label in label_to_index.values()]
@@ -64,53 +78,77 @@ class imagesToTfRecord:
         """ Decode, resize and normalize image
             @Return image
         """
+        print('resizing values: %d en %d' % (x_px, y_px))
         image = tf.image.decode_jpeg(image, channels=self.preprocessing_channels)
-        image = tf.image.resize_images(image, [self.x_px, self.y_px])
-        image /= 255.0  # normalize to [0,1] range
+        image = tf.image.resize_images(image, [x_px, y_px])
+        image /= 255  # normalize to [0,1] range
         return image
 
     def load_and_preprocess_image(self, path):
         """ Read and preprocess image
             @Return preprocessed image
         """
-        print("path: ", path)
         image = tf.read_file(path)
         return self.preprocess_image(image)
 
 
-    def _write_to_tf_record(self, dataset):
+    def _write_to_tf_record(self, tfrecord_filename, image_path, begin=0, einde=-1, x_px=96, y_px=96):
         """ Create TFRecord file """
-        #image_ds = tf.data.Dataset.from_tensor_slices(all_image_paths).map(tf.read_file)
-        tfrecord = tf.data.experimental.TFRecordWriter(self.record_filepath)
-        tfrecord.write(dataset)
+        print("Write to TFRecord...........")
+        writer = tf.python_io.TFRecordWriter(tfrecord_filename)
+        images = [f for f in os.listdir(image_path) if os.path.isfile( os.path.join(image_path, f) )]
+        label_dict = self.load_labels(self.label_file)
+        #print("images: ", images)
+        for index, image in enumerate(images[begin:einde]):
+            if not index % 1000:
+                print("Train data: {}/{}".format(index, len(images)))
+                sys.stdout.flush()
+            img = self.load_and_preprocess_image(image_path+image)
+            print("image = ", img)
+            print(img.shape)
+            rows = img.shape[0]
+            cols = img.shape[1]
+            depth = img.shape[2]
 
-    def _read_from_tf_record(self, record_filepath):
+            img_id = os.path.basename(image).strip(".jpg")
+            label = label_dict[img_id]
+            feature = {'label': self._int64_feature(int(label)),
+                       'height': self._int64_feature(rows),
+                       'width': self._int64_feature(cols),
+                       'depth': self._int64_feature(depth),
+                       'image': self._bytes_feature(tf.compat.as_bytes(img.__str__()))}
+            # Create an example protocol buffer
+            example = tf.train.Example(features=tf.train.Features(feature=feature))
+            # Write the serialized example
+            print("example: ", example)
+            writer.write(example.SerializeToString())
+        writer.close()
+        sys.stdout.flush()
+
+
+    def _read_from_tf_record(self, folder):
         """ Read a TFRecord file
             NOT Shuffled are randomized!
         """
-        print("Reading from TFRecord.........")
-        ds = tf.data.TFRecordDataset(record_filepath).map(self.preprocess_image)
-        # zip with the labels to get (image, label) pairs
-        #ds = tf.data.Dataset.zip((image_ds, label_ds))
-        #ds = ds.apply(tf.data.experimental.shuffle_and_repeat(buffer_size=self.image_count(ds)))
-        ds = ds.batch(self.batch_size).prefetch(self.autotune)
-        print(ds)
-        return ds
+        reader = tf.TFRecordReader()
+        filenames = glob.glob(folder+'*.tfrecords')
+        filename_queue = tf.train.string_input_producer(
+            filenames)
+        _, serialized_example = reader.read(filename_queue)
+        feature_set = { 'image': tf.FixedLenFeature([], tf.string),
+                        'label': tf.FixedLenFeature([], tf.int64) }
+        features = tf.parse_single_example( serialized_example, features = feature_set )
+        label = features['label']
+        image = features['image']
+        with tf.Session() as sess:
+            print(sess.run([image, label]))
 
-    def verifyRecord(self, filename):
-        for example in tf.python_io.tf_record_iterator(filename):
-            result = tf.train.Example.FromString(example)
-        return result
-
-    def writeRecord(self, begin=0, einde=-1):
+    def writeRecord(self, tfrecord_filename, TRAIN_DIR, begin=0, einde=-1):
         """ Write images and labels to TFRecord
             @begin: slice array begin
             @einde: slice array einde
         """
-        dataset = self.buildDataset(self.label_file, begin=begin, einde=einde)
-        self._write_to_tf_record(dataset)
-        example = self.verifyRecord(self.record_filepath)
-        print(example)
+        self._write_to_tf_record(tfrecord_filename, TRAIN_DIR, begin=begin, einde=einde)
 
     def readRecord(self, record_filepath):
         """ Read a TFRecord file as dataset
@@ -131,11 +169,14 @@ if __name__ == '__main__':
     TRAIN_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/trainjpg/"
     TEST_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/testjpg/"
     TRAIN_LABELS = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/train_labels.csv"
-    OUT_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/"
-
+    OUT_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/Records"
+    BEGIN = 0
+    EINDE = 5
 
     y_px, x_px, preprocessing_channels = 96, 96, 3
+    tfrecord_filename = OUT_DIR+"histo_"+str(BEGIN) + "_" + str(EINDE) + "_TF_record.h5"
+
     print("Image Height: %d, Width: %d, Channels: %d" % (y_px, x_px, preprocessing_channels))
     # Call imagesToTfRecord class to build dataset and store in TFRecord
-    T2 = imagesToTfRecord(OUT_DIR+"histo_1000_TF_record.h5", TRAIN_DIR, TRAIN_LABELS, x_px, y_px, preprocessing_channels)
-    T2.writeRecord(begin=0, einde=1000)
+    T2 = imagesToTfRecord(tfrecord_filename, TRAIN_DIR, TRAIN_LABELS, x_px, y_px, preprocessing_channels)
+    T2.writeRecord(tfrecord_filename, TRAIN_DIR, begin=BEGIN, einde=EINDE)
