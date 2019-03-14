@@ -73,6 +73,7 @@ class imagesToTfRecord:
         """ Read and preprocess image
             @Return preprocessed image
         """
+        print("path: ", path)
         image = tf.read_file(path)
         return self.preprocess_image(image)
 
