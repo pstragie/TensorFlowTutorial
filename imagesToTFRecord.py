@@ -1,8 +1,11 @@
 import tensorflow as tf
 import os, sys
+import numpy as np
+
+import IPython.display as display
+from PIL import Image, ImageDraw
 import glob
 
-tf.enable_eager_execution()
 print(tf.VERSION)
 
 class imagesToTfRecord:
@@ -78,7 +81,6 @@ class imagesToTfRecord:
         """ Decode, resize and normalize image
             @Return image
         """
-        print('resizing values: %d en %d' % (x_px, y_px))
         image = tf.image.decode_jpeg(image, channels=self.preprocessing_channels)
         image = tf.image.resize_images(image, [x_px, y_px])
         image /= 255  # normalize to [0,1] range
@@ -92,56 +94,118 @@ class imagesToTfRecord:
         return self.preprocess_image(image)
 
 
-    def _write_to_tf_record(self, tfrecord_filename, image_path, begin=0, einde=-1, x_px=96, y_px=96):
+    def _write_to_tf_record(self, tfrecord_filename, image_path, begin=0, einde=-1):
         """ Create TFRecord file """
         print("Write to TFRecord...........")
         writer = tf.python_io.TFRecordWriter(tfrecord_filename)
-        images = [f for f in os.listdir(image_path) if os.path.isfile( os.path.join(image_path, f) )]
+
+        # List of image paths, np array of labels
+        images = [f for f in os.listdir(image_path) if os.path.isfile(os.path.join(image_path, f))]
         label_dict = self.load_labels(self.label_file)
         #print("images: ", images)
+        print("Aantal afbeeldingen gekozen: %d" % (len(images[begin:einde])))
+
+        # Loop over images and labels, wrap in TF Examples, write away to TFRecord file
         for index, image in enumerate(images[begin:einde]):
+            img_id = os.path.basename(image).strip(".jpg")
             if not index % 1000:
-                print("Train data: {}/{}".format(index, len(images)))
+                print("Train data: {}/{}".format(index, len(images[begin:einde])))
                 sys.stdout.flush()
-            img = self.load_and_preprocess_image(image_path+image)
-            print("image = ", img)
-            print(img.shape)
+            #img = self.load_and_preprocess_image(image_path+image)
+            img = Image.open(image_path+image)
+            img = np.array(img.resize((96, 96)))
             rows = img.shape[0]
             cols = img.shape[1]
             depth = img.shape[2]
+            image_string = open(image_path+image, 'rb').read()
 
-            img_id = os.path.basename(image).strip(".jpg")
-            label = label_dict[img_id]
-            feature = {'label': self._int64_feature(int(label)),
+            label = int(label_dict[img_id])
+            image_name = str.encode(image)
+            feature = {'image_name': self._bytes_feature(image_name),
                        'height': self._int64_feature(rows),
                        'width': self._int64_feature(cols),
                        'depth': self._int64_feature(depth),
-                       'image': self._bytes_feature(tf.compat.as_bytes(img.__str__()))}
+                       'label': self._int64_feature(label),
+                       'image_raw': self._bytes_feature(image_string)}
             # Create an example protocol buffer
             example = tf.train.Example(features=tf.train.Features(feature=feature))
+            #print("ex: ", repr(example))
             # Write the serialized example
-            print("example: ", example)
             writer.write(example.SerializeToString())
         writer.close()
+        print("Writing finished.")
         sys.stdout.flush()
 
+    def _convert_tf_record_to_dataset(self, filepath):
+        """ Read a TFRecord file """
+        record_iterator = tf.python_io.tf_record_iterator(path=filepath)
 
-    def _read_from_tf_record(self, folder):
+        for string_record in record_iterator:
+            example = tf.train.Example()
+            example.ParseFromString(string_record)
+            print(dict(example.features.feature))
+
+            break
+
+    def _read_from_tf_record(self, filepath, x_px=96, y_px=96):
         """ Read a TFRecord file
-            NOT Shuffled are randomized!
+            NOT Shuffled or randomized!
         """
-        reader = tf.TFRecordReader()
-        filenames = glob.glob(folder+'*.tfrecords')
-        filename_queue = tf.train.string_input_producer(
-            filenames)
-        _, serialized_example = reader.read(filename_queue)
-        feature_set = { 'image': tf.FixedLenFeature([], tf.string),
-                        'label': tf.FixedLenFeature([], tf.int64) }
-        features = tf.parse_single_example( serialized_example, features = feature_set )
-        label = features['label']
-        image = features['image']
-        with tf.Session() as sess:
-            print(sess.run([image, label]))
+        filenames = [filepath]
+
+
+        #Create a dictionary describing the features.
+        image_feature_description = {
+            'image_name': tf.FixedLenFeature([], dtype=tf.string),
+            'height': tf.FixedLenFeature([], dtype=tf.int64),
+            'width': tf.FixedLenFeature([], dtype=tf.int64),
+            'depth': tf.FixedLenFeature([], dtype=tf.int64),
+            'label': tf.FixedLenFeature([], dtype=tf.int64),
+            'image_raw': tf.FixedLenFeature([], dtype=tf.string)
+        }
+
+
+        def _parse_record(example_proto, clip=False):
+            # Parse a single record into image, label
+            example = tf.parse_single_example(example_proto, image_feature_description)
+
+            height = tf.cast(example['height'], tf.int64)
+            width = tf.cast(example['width'], tf.int64)
+            depth = tf.cast(example['depth'], tf.int64)
+            im_shape = tf.stack([height, width, depth])
+
+            im = tf.image.decode_jpeg(example['image_raw'], channels=3)
+            im = tf.divide(tf.cast(im, tf.float32), tf.constant(255.0, dtype=tf.float32))
+            im = tf.reshape(im, im_shape)
+            #im = tf.stack([example['height'], example['width'], example['depth']])
+            #label = sample['label']
+
+            #im = tf.decode_raw(example['image_raw'])
+            #im = tf.reshape(im, image_shape)
+            diagnosis = tf.cast(example['label'], tf.int64)
+
+            #diagnosis = example['label']
+            return im, diagnosis
+
+        # Construct a TFRecordDataset
+        ds_train = tf.data.TFRecordDataset(filepath)
+
+        ds_train = ds_train.map(_parse_record)
+
+        ds_train = ds_train.shuffle(10).batch(32)
+        return ds_train
+        """
+        def _parse_image_function(example_proto, clip=False):
+            # Parse the input tf.Example proto using the dictionary above.
+            return tf.parse_single_example(example_proto, image_feature_description)
+
+        raw_image_dataset = tf.data.TFRecordDataset(filenames)
+        parsed_image_dataset = raw_image_dataset.map(_parse_image_function)
+        parsed_image_dataset = parsed_image_dataset.shuffle(1000).batch(32)
+        
+        return parsed_image_dataset
+        """
+
 
     def writeRecord(self, tfrecord_filename, TRAIN_DIR, begin=0, einde=-1):
         """ Write images and labels to TFRecord
@@ -154,6 +218,8 @@ class imagesToTfRecord:
         """ Read a TFRecord file as dataset
             @Return tf.dataset
         """
+        print("record filepath = ", record_filepath)
+        #self._convert_tf_record_to_dataset(filepath=record_filepath)
         dataset = self._read_from_tf_record(record_filepath)
         return dataset
 
@@ -165,18 +231,3 @@ class imageResolution:
     def getResolution(self, image):
         return image.shape()
 
-if __name__ == '__main__':
-    TRAIN_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/trainjpg/"
-    TEST_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/testjpg/"
-    TRAIN_LABELS = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/train_labels.csv"
-    OUT_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/Records"
-    BEGIN = 0
-    EINDE = 5
-
-    y_px, x_px, preprocessing_channels = 96, 96, 3
-    tfrecord_filename = OUT_DIR+"histo_"+str(BEGIN) + "_" + str(EINDE) + "_TF_record.h5"
-
-    print("Image Height: %d, Width: %d, Channels: %d" % (y_px, x_px, preprocessing_channels))
-    # Call imagesToTfRecord class to build dataset and store in TFRecord
-    T2 = imagesToTfRecord(tfrecord_filename, TRAIN_DIR, TRAIN_LABELS, x_px, y_px, preprocessing_channels)
-    T2.writeRecord(tfrecord_filename, TRAIN_DIR, begin=BEGIN, einde=EINDE)
