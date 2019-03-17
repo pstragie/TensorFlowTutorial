@@ -83,7 +83,7 @@ class imagesToTfRecord:
         """
         image = tf.image.decode_jpeg(image, channels=self.preprocessing_channels)
         image = tf.image.resize_images(image, [x_px, y_px])
-        image /= 255  # normalize to [0,1] range
+        #image /= 255  # normalize to [0,1] range
         return image
 
     def load_and_preprocess_image(self, path):
@@ -136,16 +136,6 @@ class imagesToTfRecord:
         print("Writing finished.")
         sys.stdout.flush()
 
-    def _convert_tf_record_to_dataset(self, filepath):
-        """ Read a TFRecord file """
-        record_iterator = tf.python_io.tf_record_iterator(path=filepath)
-
-        for string_record in record_iterator:
-            example = tf.train.Example()
-            example.ParseFromString(string_record)
-            print(dict(example.features.feature))
-
-            break
 
     def _read_from_tf_record(self, filepath, x_px=96, y_px=96):
         """ Read a TFRecord file
@@ -175,24 +165,18 @@ class imagesToTfRecord:
             im_shape = tf.stack([height, width, depth])
 
             im = tf.image.decode_jpeg(example['image_raw'], channels=3)
-            im = tf.divide(tf.cast(im, tf.float32), tf.constant(255.0, dtype=tf.float32))
+            #im = tf.divide(tf.cast(im, tf.float32), tf.constant(255.0, dtype=tf.float32))
             im = tf.reshape(im, im_shape)
-            #im = tf.stack([example['height'], example['width'], example['depth']])
-            #label = sample['label']
 
-            #im = tf.decode_raw(example['image_raw'])
-            #im = tf.reshape(im, image_shape)
             diagnosis = tf.cast(example['label'], tf.int64)
 
-            #diagnosis = example['label']
             return im, diagnosis
 
         # Construct a TFRecordDataset
         ds_train = tf.data.TFRecordDataset(filepath)
-
         ds_train = ds_train.map(_parse_record)
+        ds_train = ds_train.shuffle(100).repeat(5).batch(32)
 
-        ds_train = ds_train.shuffle(10).batch(32)
         return ds_train
         """
         def _parse_image_function(example_proto, clip=False):

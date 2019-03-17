@@ -7,8 +7,15 @@ from tensorflow import keras
 # Helper libraries
 import numpy as np
 import matplotlib.pyplot as plt
-
+from imagesToTFRecord import imagesToTfRecord
 """ TensorFlow Noobie Tutorial """
+
+
+TRAIN_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/trainjpg/"
+TEST_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/testjpg/"
+TRAIN_LABELS = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/train_labels.csv"
+OUT_DIR = "/media/pieter/bd7f5343-172e-43f6-8e0f-417aa96d3113/Downloads/ML/Histopathology/Records/"
+
 
 
 class TensorFlow:
@@ -33,27 +40,41 @@ class TensorFlow:
         """Import the Fashion MNIST dataset"""
         fashion_mnist = keras.datasets.fashion_mnist
         (train_images, train_labels), (test_images, test_labels) = tf.keras.datasets.mnist.load_data()
+        BEGIN = 0
+        EINDE = 5000
+        #S = startML()
+        tfrecord_filename = OUT_DIR + "histo_" + str(BEGIN) + "_" + str(EINDE) + "_TF_record.tfrecords"
+        T2 = imagesToTfRecord(tfrecord_filename, TRAIN_DIR, TRAIN_LABELS, 96, 96, 3)
+        parsed_image_dataset = T2.readRecord(tfrecord_filename)
+        print(parsed_image_dataset)
+        # for parsed_record in parsed_image_dataset.take(5):
+        # print("parsed_record: ", repr(parsed_record))
+        # labels = parsed_record[1][0]
+        parsed_image_dataset.batch(32)
+        iterator = parsed_image_dataset.make_one_shot_iterator()
+        image_ds, label_ds = iterator.get_next()
 
+        test_images, test_labels = image_ds, label_ds
+        train_images, train_labels = image_ds, label_ds
         """Explore the data"""
         # Loading the dataset returns four NumPy arrays: train_images and train_labels
         # The model is tested against the test set, the test_images and test_labels arrays
         #train_images.shape
-        train_labels = train_labels[:1000]
-        test_labels = test_labels[:1000]
 
-        train_images = train_images[:1000].reshape(-1, 28 * 28) / 255.0  # Divide by 255.0 to scale values to a range of 0 to 1
-        test_images = test_images[:1000].reshape(-1, 28 * 28) / 255.0
+        #train_images = train_images[:1000].reshape(-1, 28 * 28) / 255.0  # Divide by 255.0 to scale values to a range of 0 to 1
+        #test_images = test_images[:1000].reshape(-1, 28 * 28) / 255.0
 
         """Preprocess the data"""
         # Preprocessing example
         #self.showPlotShoe(train_images)
 
-        test_images = test_images / 255.0
+        #test_images = test_images / 255.0
         # Display the first 25 images from the training set and display the class name below each image
         #self.showPlotImages(train_images, train_labels)
 
         """Define a model"""
         model = self.create_model()
+        model.fit(train_images, train_labels, epochs=5, steps_per_epoch=100)
         model.summary()
 
         checkpoint_path = "training_1/cp.ckpt"
@@ -66,9 +87,10 @@ class TensorFlow:
 
         model = self.create_model()
 
-        model.fit(train_images, train_labels,  epochs = 10,
-                  validation_data = (test_images,test_labels),
-                  callbacks = [cp_callback])  # pass callback to training
+        model.fit(train_images, train_labels,  epochs=5,
+                  steps_per_epoch=100,
+                  validation_data=(test_images, test_labels),
+                  callbacks=[cp_callback])  # pass callback to training
 
         # This may generate warnings related to saving the state of the optimizer.
         # These warnings (and similar warnings throughout this notebook)
@@ -76,8 +98,18 @@ class TensorFlow:
 
         """Create a new, untrained model."""
         model = self.create_model()
-
-        loss, acc = model.evaluate(test_images, test_labels)
+        model.fit(test_images, test_labels, epochs=5,
+                  steps_per_epoch=100)
+        loss, acc = model.evaluate(test_images,
+                                     y=test_labels,
+                                     batch_size=32,
+                                     verbose=1,
+                                     sample_weight=None,
+                                     steps=10,
+                                     max_queue_size=10,
+                                     workers=1,
+                                     use_multiprocessing=False
+                                     )
         print("Untrained model, accuracy: {:5.2f}%".format(100 * acc))
 
         """Then load the weights from the checkpoint, and re-evaluate."""
@@ -98,7 +130,8 @@ class TensorFlow:
         model = self.create_model()
         model.save_weights(checkpoint_path.format(epoch=0))
         model.fit(train_images, train_labels,
-                  epochs=50, callbacks=[cp_callback],
+                  epochs=10, callbacks=[cp_callback],
+                  steps_per_epoch=100,
                   validation_data=(test_images, test_labels),
                   verbose=0)
 
@@ -107,6 +140,8 @@ class TensorFlow:
 
         """To test, reset the model and load the latest checkpoint."""
         model = self.create_model()
+        model.fit(test_images, test_labels, epochs=5,
+                  steps_per_epoch=100)
         model.load_weights(latest)
         loss, acc = model.evaluate(test_images, test_labels)
         print("Restored model, accuracy: {:5.2f}%".format(100 * acc))
@@ -117,6 +152,7 @@ class TensorFlow:
 
         # Restore the weights
         model = self.create_model()
+        model.fit(test_images, test_labels, epochs=5, steps_per_epoch=100)
         model.load_weights('./checkpoints/my_checkpoint')
 
         loss, acc = model.evaluate(test_images, test_labels)
@@ -125,7 +161,7 @@ class TensorFlow:
         """Save the entire moel: as an hdf5 file."""
         model = self.create_model()
 
-        model.fit(train_images, train_labels, epochs=5)
+        model.fit(train_images, train_labels, epochs=5, steps_per_epoch=100)
 
         # Save entire model to a HDF5 file
         model.save('my_model.h5')
@@ -143,7 +179,7 @@ class TensorFlow:
         """Build a fresh model:"""
         model = self.create_model()
 
-        model.fit(train_images, train_labels, epochs=5)
+        model.fit(train_images, train_labels, epochs=5, steps_per_epoch=100)
 
         """Create a saved_model"""
         saved_model_path = tf.contrib.saved_model.save_keras_model(model, "./saved_models")
@@ -156,9 +192,9 @@ class TensorFlow:
         # The model has to be compiled before evaluating.
         # This step is not required if the saved model is only being deployed.
 
-        new_model.compile(optimizer=tf.keras.optimizers.Adam(),
-                          loss=tf.keras.losses.sparse_categorical_crossentropy,
-                          metrics=['accuracy'])
+        new_model.compile(optimizer='adam',
+                  loss='binary_crossentropy',
+                  metrics=['accuracy'])
 
         # Evaluate the restored model.
         loss, acc = new_model.evaluate(test_images, test_labels)
@@ -247,16 +283,25 @@ class TensorFlow:
         thisplot[true_label].set_color('blue')
 
     def create_model(self):
+        model = keras.Sequential([
+            keras.layers.Flatten(input_shape=(96, 96, 3)),  # This layer has no parameters to learn
+            keras.layers.Dense(256, activation=tf.nn.relu),  # 128 nodes
+            keras.layers.Dense(1, activation=tf.nn.sigmoid)  # array of 2 probability scores
+        ])
+        '''
         model = tf.keras.models.Sequential([
             keras.layers.Dense(512, activation=tf.keras.activations.relu, input_shape=(784,)),
             keras.layers.Dropout(0.2),
             keras.layers.Dense(10, activation=tf.keras.activations.softmax)
         ])
-
+        
         model.compile(optimizer=tf.keras.optimizers.Adam(),
                       loss=tf.keras.losses.sparse_categorical_crossentropy,
                       metrics=['accuracy'])
-
+        '''
+        model.compile(optimizer='adam',
+                      loss='binary_crossentropy',
+                      metrics=['accuracy'])
         return model
 
 if __name__ == "__main__":
